@@ -58,7 +58,6 @@ sparrowClientQueues
       { initIn
       , onReject: liftEff $ do
         One.delQueue $ One.allowReading deltaInQueue
-        One.delQueue initInQueue
         One.delQueue $ One.allowReading unsubscribeQueue
         One.putQueue (One.allowWriting onRejectQueue) unit
       , receive: \_ deltaOut -> liftEff $ One.putQueue (One.allowWriting deltaOutQueue) deltaOut
