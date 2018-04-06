@@ -1,7 +1,6 @@
 module Sparrow.Client.Queue where
 
 import Sparrow.Types (Client)
-import Sparrow.Client.Types (SparrowClientT)
 import Queue.One.Aff as OneIO
 import Queue.One as One
 import Queue (READ, WRITE)
@@ -9,6 +8,7 @@ import Queue (READ, WRITE)
 import Prelude
 import Data.Maybe (Maybe (..))
 import Data.Functor.Singleton (class SingletonFunctor, liftBaseWith_)
+import Control.Monad.Aff (Aff)
 import Control.Monad.Eff (Eff)
 import Control.Monad.Eff.Ref (REF)
 import Control.Monad.Eff.Class (class MonadEff, liftEff)
@@ -72,3 +72,28 @@ sparrowClientQueues
               One.onQueue (One.allowReading unsubscribeQueue) \_ -> runM unsubscribe
           pure Nothing
       )
+
+
+-- | Simplified version of calling queues, which doesn't care about unsubscribing
+callSparrowClientQueues :: forall eff initIn initOut deltaIn deltaOut
+                         . SparrowClientQueues (Effects eff) initIn initOut deltaIn deltaOut
+                        -> (deltaOut -> Eff (Effects eff) Unit)
+                        -> initIn
+                        -> Aff (Effects eff)
+                              ( Maybe
+                                { initOut :: initOut
+                                , deltaIn :: deltaIn -> Eff (Effects eff) Unit
+                                }
+                              )
+callSparrowClientQueues {init,deltaIn,deltaOut,onReject,unsubscribe} onDeltaOut initIn = do
+  mInitOut <- OneIO.callAsync init initIn
+  case mInitOut of
+    Nothing -> pure Nothing
+    Just initOut -> do
+      liftEff $ do
+        One.onQueue deltaOut onDeltaOut
+        One.onceQueue onReject \_ -> One.delQueue deltaOut
+      pure $ Just
+        { initOut
+        , deltaIn: One.putQueue deltaIn
+        }
