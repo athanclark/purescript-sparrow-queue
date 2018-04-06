@@ -81,8 +81,9 @@ callSparrowClientQueues :: forall eff initIn initOut deltaIn deltaOut
                         -> initIn
                         -> Aff (Effects eff)
                               ( Maybe
-                                { initOut :: initOut
-                                , deltaIn :: deltaIn -> Eff (Effects eff) Unit
+                                { initOut     :: initOut
+                                , deltaIn     :: deltaIn -> Eff (Effects eff) Unit
+                                , unsubscribe :: Eff (Effects eff) Unit
                                 }
                               )
 callSparrowClientQueues {init,deltaIn,deltaOut,onReject,unsubscribe} onDeltaOut initIn = do
@@ -96,4 +97,5 @@ callSparrowClientQueues {init,deltaIn,deltaOut,onReject,unsubscribe} onDeltaOut 
       pure $ Just
         { initOut
         , deltaIn: One.putQueue deltaIn
+        , unsubscribe: One.putQueue unsubscribe unit
         }
