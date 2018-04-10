@@ -1,6 +1,6 @@
 module Sparrow.Client.Queue where
 
-import Sparrow.Types (Client)
+import Sparrow.Types (Client, JSONVoid, staticClient)
 import Queue.One.Aff as OneIO
 import Queue.One as One
 import Queue (READ, WRITE)
@@ -15,8 +15,12 @@ import Control.Monad.Eff.Class (class MonadEff, liftEff)
 import Control.Monad.Trans.Control (class MonadBaseControl)
 
 
+type SparrowStaticClientQueues eff initIn initOut =
+  OneIO.IOQueues eff initIn (Maybe initOut)
+
+
 type SparrowClientQueues eff initIn initOut deltaIn deltaOut =
-  { init :: OneIO.IOQueues eff initIn (Maybe initOut)
+  { init :: SparrowStaticClientQueues eff initIn initOut
   , deltaIn :: One.Queue (write :: WRITE) eff deltaIn
   , deltaOut :: One.Queue (read :: READ) eff deltaOut
   , onReject :: One.Queue (read :: READ) eff Unit
@@ -24,10 +28,15 @@ type SparrowClientQueues eff initIn initOut deltaIn deltaOut =
   }
 
 
+newSparrowStaticClientQueues :: forall eff initIn initOut
+                              . Eff (Effects eff) (SparrowStaticClientQueues (Effects eff) initIn initOut)
+newSparrowStaticClientQueues = OneIO.newIOQueues
+
+
 newSparrowClientQueues :: forall eff initIn initOut deltaIn deltaOut
-                        . Eff (ref :: REF | eff) (SparrowClientQueues (ref :: REF | eff) initIn initOut deltaIn deltaOut)
+                        . Eff (Effects eff) (SparrowClientQueues (Effects eff) initIn initOut deltaIn deltaOut)
 newSparrowClientQueues = do
-  init <- OneIO.newIOQueues
+  init <- newSparrowStaticClientQueues
   deltaIn <- One.writeOnly <$> One.newQueue
   deltaOut <- One.readOnly <$> One.newQueue
   unsubscribe <- One.writeOnly <$> One.newQueue
@@ -38,6 +47,18 @@ newSparrowClientQueues = do
 type Effects eff =
   ( ref :: REF
   | eff)
+
+
+sparrowClientStaticQueues :: forall eff m stM initIn initOut
+                           . MonadEff (Effects eff) m
+                          => MonadBaseControl (Eff (Effects eff)) m stM
+                          => SingletonFunctor stM
+                          => SparrowStaticClientQueues (Effects eff) initIn initOut
+                          -> Client (Effects eff) m initIn initOut JSONVoid JSONVoid
+sparrowClientStaticQueues (OneIO.IOQueues {input: initInQueue, output: initOutQueue}) =
+  staticClient \invoke -> liftBaseWith_ \runM ->
+    One.onQueue initInQueue \initIn ->
+      runM (invoke initIn (liftEff <<< One.putQueue initOutQueue))
 
 
 sparrowClientQueues :: forall eff m stM initIn initOut deltaIn deltaOut
