@@ -49,13 +49,13 @@ type Effects eff =
   | eff)
 
 
-sparrowClientStaticQueues :: forall eff m stM initIn initOut
+sparrowStaticClientQueues :: forall eff m stM initIn initOut
                            . MonadEff (Effects eff) m
                           => MonadBaseControl (Eff (Effects eff)) m stM
                           => SingletonFunctor stM
                           => SparrowStaticClientQueues (Effects eff) initIn initOut
                           -> Client (Effects eff) m initIn initOut JSONVoid JSONVoid
-sparrowClientStaticQueues (OneIO.IOQueues {input: initInQueue, output: initOutQueue}) =
+sparrowStaticClientQueues (OneIO.IOQueues {input: initInQueue, output: initOutQueue}) =
   staticClient \invoke -> liftBaseWith_ \runM ->
     One.onQueue initInQueue \initIn ->
       runM (invoke initIn (liftEff <<< One.putQueue initOutQueue))
