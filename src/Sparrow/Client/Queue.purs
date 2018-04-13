@@ -78,8 +78,8 @@ sparrowClientQueues
     register
       { initIn
       , onReject: liftEff $ do
-        One.delQueue $ One.allowReading deltaInQueue
-        One.delQueue $ One.allowReading unsubscribeQueue
+        One.delQueue (One.allowReading deltaInQueue)
+        One.delQueue (One.allowReading unsubscribeQueue)
         One.putQueue (One.allowWriting onRejectQueue) unit
       , receive: \_ deltaOut -> liftEff $ One.putQueue (One.allowWriting deltaOutQueue) deltaOut
       }
@@ -118,5 +118,7 @@ callSparrowClientQueues {init,deltaIn,deltaOut,onReject,unsubscribe} onDeltaOut 
       pure $ Just
         { initOut
         , deltaIn: One.putQueue deltaIn
-        , unsubscribe: One.putQueue unsubscribe unit
+        , unsubscribe: do
+          One.delQueue deltaOut
+          One.putQueue unsubscribe unit
         }
