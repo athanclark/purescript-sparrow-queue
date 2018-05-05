@@ -1,6 +1,7 @@
 module Sparrow.Client.Queue where
 
 import Sparrow.Types (Client, JSONVoid, staticClient)
+import Queue.Types (readOnly, writeOnly, allowReading, allowWriting)
 import Queue.One.Aff as OneIO
 import Queue.One as One
 import Queue (READ, WRITE)
@@ -37,10 +38,10 @@ newSparrowClientQueues :: forall eff initIn initOut deltaIn deltaOut
                         . Eff (Effects eff) (SparrowClientQueues (Effects eff) initIn initOut deltaIn deltaOut)
 newSparrowClientQueues = do
   init <- newSparrowStaticClientQueues
-  deltaIn <- One.writeOnly <$> One.newQueue
-  deltaOut <- One.readOnly <$> One.newQueue
-  unsubscribe <- One.writeOnly <$> One.newQueue
-  onReject <- One.readOnly <$> One.newQueue
+  deltaIn <- writeOnly <$> One.newQueue
+  deltaOut <- readOnly <$> One.newQueue
+  unsubscribe <- writeOnly <$> One.newQueue
+  onReject <- readOnly <$> One.newQueue
   pure {init, deltaIn, deltaOut, onReject, unsubscribe}
 
 
@@ -78,10 +79,10 @@ sparrowClientQueues
     register
       { initIn
       , onReject: liftEff $ do
-        One.delQueue (One.allowReading deltaInQueue)
-        One.delQueue (One.allowReading unsubscribeQueue)
-        One.putQueue (One.allowWriting onRejectQueue) unit
-      , receive: \_ deltaOut -> liftEff $ One.putQueue (One.allowWriting deltaOutQueue) deltaOut
+        One.delQueue (allowReading deltaInQueue)
+        One.delQueue (allowReading unsubscribeQueue)
+        One.putQueue (allowWriting onRejectQueue) unit
+      , receive: \_ deltaOut -> liftEff $ One.putQueue (allowWriting deltaOutQueue) deltaOut
       }
       (\mReturn -> do
           case mReturn of
@@ -89,8 +90,8 @@ sparrowClientQueues
               One.putQueue initOutQueue Nothing
             Just {initOut,sendCurrent,unsubscribe} -> liftEff $ do
               One.putQueue initOutQueue (Just initOut)
-              One.onQueue (One.allowReading deltaInQueue) (runM <<< sendCurrent)
-              One.onQueue (One.allowReading unsubscribeQueue) \_ -> runM unsubscribe
+              One.onQueue (allowReading deltaInQueue) (runM <<< sendCurrent)
+              One.onQueue (allowReading unsubscribeQueue) \_ -> runM unsubscribe
           pure Nothing
       )
 
