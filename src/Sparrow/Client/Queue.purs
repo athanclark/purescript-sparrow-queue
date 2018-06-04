@@ -8,10 +8,11 @@ import Queue (READ, WRITE)
 
 import Prelude
 import Data.Maybe (Maybe (..))
+import Data.Either (Either (..))
 import Data.Functor.Singleton (class SingletonFunctor, liftBaseWith_)
-import Control.Monad.Aff (Aff)
+import Control.Monad.Aff (Aff, runAff_)
 import Control.Monad.Eff (Eff)
-import Control.Monad.Eff.Ref (REF)
+import Control.Monad.Eff.Ref (REF, newRef, writeRef, readRef)
 import Control.Monad.Eff.Class (class MonadEff, liftEff)
 import Control.Monad.Trans.Control (class MonadBaseControl)
 
@@ -123,3 +124,42 @@ callSparrowClientQueues {init,deltaIn,deltaOut,onReject,unsubscribe} onDeltaOut 
           One.delQueue deltaOut
           One.putQueue unsubscribe unit
         }
+
+
+-- | Be open as long as possible, while disallowing multiple init invocations while
+-- | a subscription is open. The only way to dismantle is through killing the sub, via
+-- | the result action
+mountSparrowClientQueuesSingleton :: forall eff initIn initOut deltaIn deltaOut
+                                   . SparrowClientQueues (Effects eff) initIn initOut deltaIn deltaOut
+                                  -> One.Queue (write :: WRITE) (Effects eff) deltaIn
+                                  -> One.Queue (write :: WRITE) (Effects eff) initIn
+                                  -> (deltaOut -> Eff (Effects eff) Unit)
+                                  -> (initOut -> Eff (Effects eff) Unit)
+                                  -> Eff (Effects eff) (Eff (Effects eff) Unit) -- completely destroy singleton - idempotent
+mountSparrowClientQueuesSingleton queues deltaInQueue initInQueue onDeltaOut onInitOut = do
+  subRef <- newRef Nothing
+  One.onQueue (allowReading initInQueue) \initIn -> do
+    mUnsub <- readRef subRef
+    case mUnsub of
+      Just _ -> pure unit -- don't do nufun if there's already sub
+      Nothing -> do -- continue if no sub exists
+        let resolve eX = case eX of
+              Left e -> pure unit -- FIXME error?
+              Right mUnsub' -> writeRef subRef mUnsub' -- dafuq?
+        runAff_ resolve $ do
+          mResult <- callSparrowClientQueues queues onDeltaOut initIn
+          case mResult of
+            Nothing -> pure Nothing
+            Just {initOut,deltaIn: onDeltaIn,unsubscribe} -> do
+              liftEff $ do
+                onInitOut initOut -- fix race conditions
+                One.onQueue (allowReading deltaInQueue) onDeltaIn
+                pure (Just unsubscribe)
+  pure $ do
+    mUnsub <- readRef subRef
+    case mUnsub of
+      Nothing -> pure unit
+      Just unsubscribe -> do
+        writeRef subRef Nothing
+        One.delQueue (allowReading deltaInQueue)
+        unsubscribe
