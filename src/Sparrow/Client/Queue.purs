@@ -134,7 +134,7 @@ mountSparrowClientQueuesSingleton :: forall eff initIn initOut deltaIn deltaOut
                                   -> One.Queue (write :: WRITE) (Effects eff) deltaIn
                                   -> One.Queue (write :: WRITE) (Effects eff) initIn
                                   -> (deltaOut -> Eff (Effects eff) Unit)
-                                  -> (initOut -> Eff (Effects eff) Unit)
+                                  -> (Maybe initOut -> Eff (Effects eff) Unit)
                                   -> Eff (Effects eff) (Eff (Effects eff) Unit) -- completely destroy singleton - idempotent
 mountSparrowClientQueuesSingleton queues deltaInQueue initInQueue onDeltaOut onInitOut = do
   subRef <- newRef Nothing
@@ -149,10 +149,12 @@ mountSparrowClientQueuesSingleton queues deltaInQueue initInQueue onDeltaOut onI
         runAff_ resolve $ do
           mResult <- callSparrowClientQueues queues onDeltaOut initIn
           case mResult of
-            Nothing -> pure Nothing
+            Nothing -> do
+              liftEff (onInitOut Nothing)
+              pure Nothing
             Just {initOut,deltaIn: onDeltaIn,unsubscribe} -> do
               liftEff $ do
-                onInitOut initOut -- fix race conditions
+                onInitOut (Just initOut) -- fix race conditions
                 One.onQueue (allowReading deltaInQueue) onDeltaIn
                 pure (Just unsubscribe)
   pure $ do
