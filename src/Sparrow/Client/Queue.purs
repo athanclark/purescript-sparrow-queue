@@ -12,6 +12,7 @@ import Data.Either (Either (..))
 import Data.Functor.Singleton (class SingletonFunctor, liftBaseWith_)
 import Control.Monad.Aff (Aff, runAff_)
 import Control.Monad.Eff (Eff)
+import Control.Monad.Eff.Console (CONSOLE, warn)
 import Control.Monad.Eff.Ref (REF, newRef, writeRef, readRef)
 import Control.Monad.Eff.Class (class MonadEff, liftEff)
 import Control.Monad.Trans.Control (class MonadBaseControl)
@@ -48,6 +49,7 @@ newSparrowClientQueues = do
 
 type Effects eff =
   ( ref :: REF
+  , console :: CONSOLE
   | eff)
 
 
@@ -144,8 +146,8 @@ mountSparrowClientQueuesSingleton queues deltaInQueue initInQueue onDeltaOut onI
       Just _ -> pure unit -- don't do nufun if there's already sub
       Nothing -> do -- continue if no sub exists
         let resolve eX = case eX of
-              Left e -> pure unit -- FIXME error?
-              Right mUnsub' -> writeRef subRef mUnsub' -- dafuq?
+              Left e -> warn $ "call sparrow client queues failed: " <> show e
+              Right mUnsub' -> writeRef subRef mUnsub'
         runAff_ resolve $ do
           mResult <- callSparrowClientQueues queues onDeltaOut initIn
           case mResult of
@@ -153,7 +155,7 @@ mountSparrowClientQueuesSingleton queues deltaInQueue initInQueue onDeltaOut onI
               liftEff (onInitOut Nothing)
               pure Nothing
             Just {initOut,deltaIn: onDeltaIn,unsubscribe} -> do
-              liftEff $ do
+              liftEff do
                 onInitOut (Just initOut) -- fix race conditions
                 One.onQueue (allowReading deltaInQueue) onDeltaIn
                 pure (Just unsubscribe)
