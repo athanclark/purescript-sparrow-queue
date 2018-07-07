@@ -144,7 +144,7 @@ mountSparrowClientQueuesSingleton queues deltaInQueue initInQueue onDeltaOut onI
     log "Received init in within mount"
     mUnsub <- readRef subRef
     case mUnsub of
-      Just _ -> pure unit -- don't do nufun if there's already sub
+      Just _ -> log "won't re-invoke init in, sub exists" -- pure unit -- don't do nufun if there's already sub
       Nothing -> do -- continue if no sub exists
         let resolve eX = case eX of
               Left e -> warn $ "callSparrowClientQueues from mount failed: " <> show e
@@ -165,7 +165,7 @@ mountSparrowClientQueuesSingleton queues deltaInQueue initInQueue onDeltaOut onI
   pure $ do
     mUnsub <- readRef subRef
     case mUnsub of
-      Nothing -> pure unit
+      Nothing -> log "no sub to kill" -- pure unit
       Just unsubscribe -> do
         writeRef subRef Nothing
         One.delQueue (allowReading deltaInQueue)
