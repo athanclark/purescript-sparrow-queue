@@ -148,25 +148,25 @@ mountSparrowClientQueuesSingleton queues deltaInQueue initInQueue onDeltaOut onI
       Nothing -> do -- continue if no sub exists
         let resolve eX = case eX of
               Left e -> warn $ "callSparrowClientQueues from mount failed: " <> show e
-              Right mUnsub' -> writeRef subRef mUnsub'
+              Right _ -> pure unit
         runAff_ resolve $ do
           liftEff $ log "calling sparrow client queues"
           mResult <- callSparrowClientQueues queues onDeltaOut initIn
           case mResult of
-            Nothing -> do
-              liftEff (onInitOut Nothing)
-              pure Nothing
+            Nothing -> liftEff do
+              writeRef subRef Nothing
+              onInitOut Nothing
             Just {initOut,deltaIn: onDeltaIn,unsubscribe} -> do
               liftEff do
                 log "got init out"
+                writeRef subRef (Just unsubscribe)
                 onInitOut (Just initOut) -- fix race conditions
                 One.onQueue (allowReading deltaInQueue) onDeltaIn
-                pure (Just unsubscribe)
   pure $ do
     mUnsub <- readRef subRef
     case mUnsub of
       Nothing -> log "no sub to kill" -- pure unit
       Just unsubscribe -> do
-        writeRef subRef Nothing
         One.delQueue (allowReading deltaInQueue)
         unsubscribe
+        writeRef subRef Nothing
