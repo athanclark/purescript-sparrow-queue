@@ -12,7 +12,7 @@ import Data.Either (Either (..))
 import Data.Functor.Singleton (class SingletonFunctor, liftBaseWith_)
 import Control.Monad.Aff (Aff, runAff_)
 import Control.Monad.Eff (Eff)
-import Control.Monad.Eff.Console (CONSOLE, warn, log)
+import Control.Monad.Eff.Console (CONSOLE, warn)
 import Control.Monad.Eff.Ref (REF, newRef, writeRef, readRef)
 import Control.Monad.Eff.Class (class MonadEff, liftEff)
 import Control.Monad.Trans.Control (class MonadBaseControl)
@@ -141,16 +141,14 @@ mountSparrowClientQueuesSingleton :: forall eff initIn initOut deltaIn deltaOut
 mountSparrowClientQueuesSingleton queues deltaInQueue initInQueue onDeltaOut onInitOut = do
   subRef <- newRef Nothing
   One.onQueue (allowReading initInQueue) \initIn -> do
-    log "Received init in within mount"
     mUnsub <- readRef subRef
     case mUnsub of
-      Just _ -> log "won't re-invoke init in, sub exists" -- pure unit -- don't do nufun if there's already sub
+      Just _ -> pure unit
       Nothing -> do -- continue if no sub exists
         let resolve eX = case eX of
               Left e -> warn $ "callSparrowClientQueues from mount failed: " <> show e
               Right _ -> pure unit
         runAff_ resolve $ do
-          liftEff $ log "calling sparrow client queues"
           mResult <- callSparrowClientQueues queues onDeltaOut initIn
           case mResult of
             Nothing -> liftEff do
@@ -158,14 +156,13 @@ mountSparrowClientQueuesSingleton queues deltaInQueue initInQueue onDeltaOut onI
               onInitOut Nothing
             Just {initOut,deltaIn: onDeltaIn,unsubscribe} -> do
               liftEff do
-                log "got init out"
                 writeRef subRef (Just unsubscribe)
                 onInitOut (Just initOut) -- fix race conditions
                 One.onQueue (allowReading deltaInQueue) onDeltaIn
   pure $ do
     mUnsub <- readRef subRef
     case mUnsub of
-      Nothing -> log "no sub to kill" -- pure unit
+      Nothing -> pure unit
       Just unsubscribe -> do
         One.delQueue (allowReading deltaInQueue)
         unsubscribe
