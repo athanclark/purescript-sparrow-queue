@@ -1,6 +1,6 @@
 module Sparrow.Client.Queue where
 
-import Sparrow.Types (Client, JSONVoid, staticClient)
+import Sparrow.Types (Client, staticClient)
 import Queue.Types (readOnly, writeOnly, allowReading, allowWriting)
 import Queue.One.Aff as OneIO
 import Queue.One as One
@@ -10,6 +10,7 @@ import Prelude
 import Data.Maybe (Maybe (..))
 import Data.Either (Either (..))
 import Data.Functor.Singleton (class SingletonFunctor, liftBaseWith_)
+import Data.Argonaut.JSONVoid (JSONVoid)
 import Control.Monad.Aff (Aff, runAff_)
 import Control.Monad.Eff (Eff)
 import Control.Monad.Eff.Console (CONSOLE, warn)
