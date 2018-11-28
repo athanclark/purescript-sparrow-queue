@@ -27,6 +27,7 @@ type SparrowClientQueues initIn initOut deltaIn deltaOut =
   , deltaOut :: One.Queue (read :: READ) deltaOut
   , onReject :: One.Queue (read :: READ) Unit
   , unsubscribe :: One.Queue (write :: WRITE) Unit
+  , active :: Ref Boolean
   }
 
 
@@ -43,7 +44,8 @@ newSparrowClientQueues = do
   deltaOut <- readOnly <$> One.new
   unsubscribe <- writeOnly <$> One.new
   onReject <- readOnly <$> One.new
-  pure {init, deltaIn, deltaOut, onReject, unsubscribe}
+  active <- Ref.new false
+  pure {init, deltaIn, deltaOut, onReject, unsubscribe, active}
 
 
 
@@ -98,34 +100,39 @@ callSparrowClientQueues :: forall initIn initOut deltaIn deltaOut
                                 , unsubscribe :: Effect Unit
                                 }
                               )
-callSparrowClientQueues {init,deltaIn,deltaOut,onReject,unsubscribe} onDeltaOut initIn = do
-  mInitOut <- OneIO.callAsync init initIn
-  case mInitOut of
-    Nothing -> pure Nothing
-    Just initOut -> do
-      liftEffect do
-        One.on deltaOut onDeltaOut
-        One.once onReject \_ -> One.del deltaOut
-      pure $ Just
-        { initOut
-        , deltaIn: One.put deltaIn
-        , unsubscribe: do
-          One.del deltaOut
-          One.put unsubscribe unit
-        }
+callSparrowClientQueues {init,deltaIn,deltaOut,onReject,unsubscribe,active} onDeltaOut initIn = do
+  mActive <- Ref.read active
+  if mActive
+    then pure unit -- FIXME queue initIns?
+    else do
+      mInitOut <- OneIO.callAsync init initIn
+      case mInitOut of
+        Nothing -> pure Nothing
+        Just initOut -> do
+          liftEffect do
+            Ref.write true active
+            One.on deltaOut onDeltaOut -- return a deltaIn supplying function that's only valid for the duration of the sub
+            One.once onReject \_ -> One.del deltaOut
+          pure $ Just
+            { initOut
+            , deltaIn: One.put deltaIn
+            , unsubscribe: do
+              One.del deltaOut
+              One.put unsubscribe unit
+            }
 
 
 -- | Be open as long as possible, while disallowing multiple init invocations while
 -- | a subscription is open. The only way to dismantle is through killing the sub, via
 -- | the result action
-mountSparrowClientQueuesSingleton :: forall initIn initOut deltaIn deltaOut
-                                   . SparrowClientQueues initIn initOut deltaIn deltaOut
-                                  -> One.Queue (write :: WRITE) deltaIn
-                                  -> One.Queue (write :: WRITE) initIn
-                                  -> (deltaOut -> Effect Unit)
-                                  -> (Maybe initOut -> Effect Unit)
-                                  -> Effect (Effect Unit) -- completely destroy singleton - idempotent
-mountSparrowClientQueuesSingleton queues deltaInQueue initInQueue onDeltaOut onInitOut = do
+mountSparrowClientQueues :: forall initIn initOut deltaIn deltaOut
+                          . SparrowClientQueues initIn initOut deltaIn deltaOut
+                         -> One.Queue (write :: WRITE) deltaIn
+                         -> One.Queue (write :: WRITE) initIn
+                         -> (deltaOut -> Effect Unit)
+                         -> (Maybe initOut -> Effect Unit)
+                         -> Effect (Effect Unit) -- completely destroy singleton - idempotent
+mountSparrowClientQueues queues deltaInQueue initInQueue onDeltaOut onInitOut = do
   subRef <- Ref.new Nothing
   One.on (allowReading initInQueue) \initIn -> do
     mUnsub <- Ref.read subRef
