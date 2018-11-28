@@ -7,21 +7,11 @@
     "output"
   ],
   "dependencies": {
-    "purescript-sparrow": "git@git.localcooking.com:tooling/purescript-sparrow.git#64fc7ace4f2ed53a53d1ebb548bf9880b8252e2a",
-    "purescript-prelude": "^3.1.1",
-    "purescript-console": "^3.0.0",
-    "purescript-queue": "^6.0.0"
+    "purescript-sparrow": "^0.0.6",
+    "purescript-prelude": "^4.1.0",
+    "purescript-queue": "^7.1.3"
   },
   "devDependencies": {
-    "purescript-psci-support": "^3.0.0"
-  },
-  "resolutions": {
-    "purescript-uuid": "2e563284ee5c41d75bf9010de3c4cded9f0223db",
-    "purescript-argonaut": "17bc7ec185b5424a6e380332fa9aec23b7536327",
-    "purescript-argonaut-core": "ac91a6b69ecc05ee9c6c4377d34f5b5931086ead",
-    "purescript-sets": "3b5eee2df36d7bebc5816210b684bc35c1f94434",
-    "purescript-uri": "0647b672c505514581399e5c47aa7ef2b7b73404",
-    "purescript-maps": "78a14ce7704db3f25e7494376787f619a33c9783",
-    "purescript-pathy": "b5c54ce00455a4fc12b3614d9e99dfeca9d3effc"
+    "purescript-psci-support": "^4.0.0"
   }
 }

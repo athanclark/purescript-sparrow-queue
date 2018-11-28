@@ -9,107 +9,93 @@ import Queue (READ, WRITE)
 import Prelude
 import Data.Maybe (Maybe (..))
 import Data.Either (Either (..))
-import Data.Functor.Singleton (class SingletonFunctor, liftBaseWith_)
 import Data.Argonaut.JSONVoid (JSONVoid)
-import Control.Monad.Aff (Aff, runAff_)
-import Control.Monad.Eff (Eff)
-import Control.Monad.Eff.Console (CONSOLE, warn)
-import Control.Monad.Eff.Ref (REF, newRef, writeRef, readRef)
-import Control.Monad.Eff.Class (class MonadEff, liftEff)
-import Control.Monad.Trans.Control (class MonadBaseControl)
+import Effect (Effect)
+import Effect.Aff (Aff, runAff_)
+import Effect.Console (warn)
+import Effect.Ref as Ref
+import Effect.Class (liftEffect)
 
 
-type SparrowStaticClientQueues eff initIn initOut =
-  OneIO.IOQueues eff initIn (Maybe initOut)
+type SparrowStaticClientQueues initIn initOut =
+  OneIO.IOQueues initIn (Maybe initOut)
 
 
-type SparrowClientQueues eff initIn initOut deltaIn deltaOut =
-  { init :: SparrowStaticClientQueues eff initIn initOut
-  , deltaIn :: One.Queue (write :: WRITE) eff deltaIn
-  , deltaOut :: One.Queue (read :: READ) eff deltaOut
-  , onReject :: One.Queue (read :: READ) eff Unit
-  , unsubscribe :: One.Queue (write :: WRITE) eff Unit
+type SparrowClientQueues initIn initOut deltaIn deltaOut =
+  { init :: SparrowStaticClientQueues initIn initOut
+  , deltaIn :: One.Queue (write :: WRITE) deltaIn
+  , deltaOut :: One.Queue (read :: READ) deltaOut
+  , onReject :: One.Queue (read :: READ) Unit
+  , unsubscribe :: One.Queue (write :: WRITE) Unit
   }
 
 
-newSparrowStaticClientQueues :: forall eff initIn initOut
-                              . Eff (Effects eff) (SparrowStaticClientQueues (Effects eff) initIn initOut)
-newSparrowStaticClientQueues = OneIO.newIOQueues
+newSparrowStaticClientQueues :: forall initIn initOut
+                              . Effect (SparrowStaticClientQueues initIn initOut)
+newSparrowStaticClientQueues = OneIO.new
 
 
-newSparrowClientQueues :: forall eff initIn initOut deltaIn deltaOut
-                        . Eff (Effects eff) (SparrowClientQueues (Effects eff) initIn initOut deltaIn deltaOut)
+newSparrowClientQueues :: forall initIn initOut deltaIn deltaOut
+                        . Effect (SparrowClientQueues initIn initOut deltaIn deltaOut)
 newSparrowClientQueues = do
   init <- newSparrowStaticClientQueues
-  deltaIn <- writeOnly <$> One.newQueue
-  deltaOut <- readOnly <$> One.newQueue
-  unsubscribe <- writeOnly <$> One.newQueue
-  onReject <- readOnly <$> One.newQueue
+  deltaIn <- writeOnly <$> One.new
+  deltaOut <- readOnly <$> One.new
+  unsubscribe <- writeOnly <$> One.new
+  onReject <- readOnly <$> One.new
   pure {init, deltaIn, deltaOut, onReject, unsubscribe}
 
 
-type Effects eff =
-  ( ref :: REF
-  , console :: CONSOLE
-  | eff)
 
-
-sparrowStaticClientQueues :: forall eff m stM initIn initOut
-                           . MonadEff (Effects eff) m
-                          => MonadBaseControl (Eff (Effects eff)) m stM
-                          => SingletonFunctor stM
-                          => SparrowStaticClientQueues (Effects eff) initIn initOut
-                          -> Client (Effects eff) m initIn initOut JSONVoid JSONVoid
+sparrowStaticClientQueues :: forall initIn initOut
+                           . SparrowStaticClientQueues initIn initOut
+                          -> Client initIn initOut JSONVoid JSONVoid
 sparrowStaticClientQueues (OneIO.IOQueues {input: initInQueue, output: initOutQueue}) =
-  staticClient \invoke -> liftBaseWith_ \runM ->
-    One.onQueue initInQueue \initIn ->
-      runM (invoke initIn (liftEff <<< One.putQueue initOutQueue))
+  staticClient \invoke ->
+    One.on initInQueue \initIn ->
+      invoke initIn (One.put initOutQueue)
 
 
-sparrowClientQueues :: forall eff m stM initIn initOut deltaIn deltaOut
-                     . MonadEff (Effects eff) m
-                    => MonadBaseControl (Eff (Effects eff)) m stM
-                    => SingletonFunctor stM
-                    => SparrowClientQueues (Effects eff) initIn initOut deltaIn deltaOut
-                    -> Client (Effects eff) m initIn initOut deltaIn deltaOut
+sparrowClientQueues :: forall initIn initOut deltaIn deltaOut
+                     . SparrowClientQueues initIn initOut deltaIn deltaOut
+                    -> Client initIn initOut deltaIn deltaOut
 sparrowClientQueues
   { init: OneIO.IOQueues {input: initInQueue, output: initOutQueue}
   , deltaIn: deltaInQueue
   , deltaOut: deltaOutQueue
   , onReject: onRejectQueue
   , unsubscribe: unsubscribeQueue
-  } = \register -> liftBaseWith_ \runM ->
-  One.onQueue initInQueue \initIn -> runM $
+  } = \register ->
+  One.on initInQueue \initIn ->
     register
       { initIn
-      , onReject: liftEff $ do
-        One.delQueue (allowReading deltaInQueue)
-        One.delQueue (allowReading unsubscribeQueue)
-        One.putQueue (allowWriting onRejectQueue) unit
-      , receive: \_ deltaOut -> liftEff $ One.putQueue (allowWriting deltaOutQueue) deltaOut
+      , onReject: do
+        One.del (allowReading deltaInQueue)
+        One.del (allowReading unsubscribeQueue)
+        One.put (allowWriting onRejectQueue) unit
+      , receive: \_ deltaOut -> One.put (allowWriting deltaOutQueue) deltaOut
       }
       (\mReturn -> do
           case mReturn of
-            Nothing -> liftEff $ do
-              One.putQueue initOutQueue Nothing
-            Just {initOut,sendCurrent,unsubscribe} -> liftEff $ do
-              One.putQueue initOutQueue (Just initOut)
-              One.onQueue (allowReading deltaInQueue) (runM <<< sendCurrent)
-              One.onQueue (allowReading unsubscribeQueue) \_ -> runM unsubscribe
+            Nothing -> One.put initOutQueue Nothing
+            Just {initOut,sendCurrent,unsubscribe} -> do
+              One.put initOutQueue (Just initOut)
+              One.on (allowReading deltaInQueue) sendCurrent
+              One.on (allowReading unsubscribeQueue) \_ -> unsubscribe
           pure Nothing
       )
 
 
 -- | Simplified version of calling queues, which doesn't care about unsubscribing
-callSparrowClientQueues :: forall eff initIn initOut deltaIn deltaOut
-                         . SparrowClientQueues (Effects eff) initIn initOut deltaIn deltaOut
-                        -> (deltaOut -> Eff (Effects eff) Unit)
+callSparrowClientQueues :: forall initIn initOut deltaIn deltaOut
+                         . SparrowClientQueues initIn initOut deltaIn deltaOut
+                        -> (deltaOut -> Effect Unit)
                         -> initIn
-                        -> Aff (Effects eff)
+                        -> Aff
                               ( Maybe
                                 { initOut     :: initOut
-                                , deltaIn     :: deltaIn -> Eff (Effects eff) Unit
-                                , unsubscribe :: Eff (Effects eff) Unit
+                                , deltaIn     :: deltaIn -> Effect Unit
+                                , unsubscribe :: Effect Unit
                                 }
                               )
 callSparrowClientQueues {init,deltaIn,deltaOut,onReject,unsubscribe} onDeltaOut initIn = do
@@ -117,54 +103,54 @@ callSparrowClientQueues {init,deltaIn,deltaOut,onReject,unsubscribe} onDeltaOut 
   case mInitOut of
     Nothing -> pure Nothing
     Just initOut -> do
-      liftEff $ do
-        One.onQueue deltaOut onDeltaOut
-        One.onceQueue onReject \_ -> One.delQueue deltaOut
+      liftEffect do
+        One.on deltaOut onDeltaOut
+        One.once onReject \_ -> One.del deltaOut
       pure $ Just
         { initOut
-        , deltaIn: One.putQueue deltaIn
+        , deltaIn: One.put deltaIn
         , unsubscribe: do
-          One.delQueue deltaOut
-          One.putQueue unsubscribe unit
+          One.del deltaOut
+          One.put unsubscribe unit
         }
 
 
 -- | Be open as long as possible, while disallowing multiple init invocations while
 -- | a subscription is open. The only way to dismantle is through killing the sub, via
 -- | the result action
-mountSparrowClientQueuesSingleton :: forall eff initIn initOut deltaIn deltaOut
-                                   . SparrowClientQueues (Effects eff) initIn initOut deltaIn deltaOut
-                                  -> One.Queue (write :: WRITE) (Effects eff) deltaIn
-                                  -> One.Queue (write :: WRITE) (Effects eff) initIn
-                                  -> (deltaOut -> Eff (Effects eff) Unit)
-                                  -> (Maybe initOut -> Eff (Effects eff) Unit)
-                                  -> Eff (Effects eff) (Eff (Effects eff) Unit) -- completely destroy singleton - idempotent
+mountSparrowClientQueuesSingleton :: forall initIn initOut deltaIn deltaOut
+                                   . SparrowClientQueues initIn initOut deltaIn deltaOut
+                                  -> One.Queue (write :: WRITE) deltaIn
+                                  -> One.Queue (write :: WRITE) initIn
+                                  -> (deltaOut -> Effect Unit)
+                                  -> (Maybe initOut -> Effect Unit)
+                                  -> Effect (Effect Unit) -- completely destroy singleton - idempotent
 mountSparrowClientQueuesSingleton queues deltaInQueue initInQueue onDeltaOut onInitOut = do
-  subRef <- newRef Nothing
-  One.onQueue (allowReading initInQueue) \initIn -> do
-    mUnsub <- readRef subRef
+  subRef <- Ref.new Nothing
+  One.on (allowReading initInQueue) \initIn -> do
+    mUnsub <- Ref.read subRef
     case mUnsub of
       Just _ -> pure unit
       Nothing -> do -- continue if no sub exists
         let resolve eX = case eX of
-              Left e -> warn $ "callSparrowClientQueues from mount failed: " <> show e
+              Left e -> warn ("callSparrowClientQueues from mount failed: " <> show e)
               Right _ -> pure unit
-        runAff_ resolve $ do
+        runAff_ resolve do
           mResult <- callSparrowClientQueues queues onDeltaOut initIn
           case mResult of
-            Nothing -> liftEff do
-              writeRef subRef Nothing
+            Nothing -> liftEffect do
+              Ref.write Nothing subRef
               onInitOut Nothing
             Just {initOut,deltaIn: onDeltaIn,unsubscribe} -> do
-              liftEff do
-                writeRef subRef (Just unsubscribe)
+              liftEffect do
+                Ref.write (Just unsubscribe) subRef
                 onInitOut (Just initOut) -- fix race conditions
-                One.onQueue (allowReading deltaInQueue) onDeltaIn
-  pure $ do
-    mUnsub <- readRef subRef
+                One.on (allowReading deltaInQueue) onDeltaIn
+  pure do
+    mUnsub <- Ref.read subRef
     case mUnsub of
       Nothing -> pure unit
       Just unsubscribe -> do
-        One.delQueue (allowReading deltaInQueue)
+        One.del (allowReading deltaInQueue)
         unsubscribe
-        writeRef subRef Nothing
+        Ref.write Nothing subRef
